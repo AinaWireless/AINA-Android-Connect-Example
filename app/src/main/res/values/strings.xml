@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">Aina Wireless - Connect example</string>
+    <string name="services">CONNECTION LOG</string>
+    <string name="btn_service">Button service (127BEEF&#8230;) value:</string>
+    <string name="logo_desc">Aina Wireless Logo</string>
+    <string name="red">RED ON</string>
+    <string name="green">GREEN ON</string>
+    <string name="amber">AMBER ON</string>
+    <string name="blue">BLUE ON</string>
+    <string name="off">OFF</string>
+</resources>
