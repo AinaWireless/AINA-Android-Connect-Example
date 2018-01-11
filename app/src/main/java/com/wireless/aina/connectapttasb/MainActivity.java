@@ -57,6 +57,7 @@ import com.google.android.gms.appindexing.AppIndex;
 import com.google.android.gms.appindexing.Thing;
 import com.google.android.gms.common.api.GoogleApiClient;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -64,6 +65,8 @@ import java.util.Set;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.UUID;
+
+import static android.icu.lang.UCharacter.GraphemeClusterBreak.L;
 
 
 public class MainActivity extends AppCompatActivity {
@@ -75,14 +78,14 @@ public class MainActivity extends AppCompatActivity {
     private BluetoothAdapter BLEAdapter;
 
     private ScanCallback mScanCallback;
+    private BroadcastReceiver mBondReceiver;
 
     private final Handler TextUpdateHandler = new Handler();
-
-    private boolean NoScanNeeded = false;
 
     private boolean GetSwVersion = false;
     private boolean GetBattLevel = false;
     private boolean GetButtons = false;
+    private boolean Bonding = false;
 
     private boolean Ready = false;
     private String State = "IDLE";
@@ -92,6 +95,8 @@ public class MainActivity extends AppCompatActivity {
     private int apttasb_button_mask = 0x00;
     private String apttasb_sw_version = "";
     private String aptt_or_asb = "";
+    private String devName = "";
+    private String classicName = "";
 
     private TextView TextView_log_1;
     private TextView TextView_log_2;
@@ -257,8 +262,13 @@ public class MainActivity extends AppCompatActivity {
             Intent enableIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
 
             startActivityForResult(enableIntent, REQUEST_ENABLE_BT);
-        } else
+        } else {
+            IntentFilter intent = new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
+            mBondReceiver = new BondReceiver();
+            registerReceiver(mBondReceiver, intent);
+
             startLE();
+        }
         // ATTENTION: This was auto-generated to implement the App Indexing API.
         // See https://g.co/AppIndexing/AndroidStudio for more information.
         client = new GoogleApiClient.Builder(this).addApi(AppIndex.API).build();
@@ -273,6 +283,7 @@ public class MainActivity extends AppCompatActivity {
             startLE();
         }
     }
+
 
 
     @Override
@@ -312,6 +323,7 @@ public class MainActivity extends AppCompatActivity {
     private void startLE() {
 
         boolean found = false;
+        classicName = "";
 
         Set<BluetoothDevice> devices = BLEAdapter.getBondedDevices();
 
@@ -323,12 +335,7 @@ public class MainActivity extends AppCompatActivity {
 
                     found = true;
 
-                    NoScanNeeded = true;
-
                     BLEDevice = device;
-
-                    IntentFilter intent = new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
-                    registerReceiver(BondReceiver, intent);
 
                     if (device.getName().contains("ASB"))
                         aptt_or_asb = "Smart Button";
@@ -336,6 +343,9 @@ public class MainActivity extends AppCompatActivity {
                         aptt_or_asb = "Aina PTT";
 
                     TextView_log_1.setText("Device " + device.getName() + " already paired.");
+
+                    devName = device.getName();
+
                     TextView_log_2.setText("Trying to connect...");
 
                     TextUpdateHandler.post(updateText);
@@ -359,6 +369,16 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
+        if(found == false)
+        {
+            for (BluetoothDevice device : devices) {
+
+                if (device.getName().contains("APTT")) {
+                    classicName = device.getName();
+                }
+            }
+        }
+
         if (found == false) {
 
             System.out.println("start scanning ble devices...");
@@ -369,7 +389,7 @@ public class MainActivity extends AppCompatActivity {
             filter_list.add(filter);
 
             TextView_log_1.setText("Devices not paired.");
-            TextView_log_2.setText("Scannin for APTT and ASB devices...");
+            TextView_log_2.setText("Scanning for APTT and ASB devices...");
 
             TextUpdateHandler.post(updateText);
 
@@ -378,6 +398,8 @@ public class MainActivity extends AppCompatActivity {
             BLEScanner.startScan(filter_list, settings, mScanCallback);
         }
     }
+
+
 
     private class BLEScanCallback extends ScanCallback {
 
@@ -392,46 +414,99 @@ public class MainActivity extends AppCompatActivity {
 
             RSSI = result.getRssi();
 
-            if (((temp.contains("ASB")) || (temp.contains("APTT"))) && (RSSI > -32)) {     // If rssi based pairing will be used, check rssi level
-//            if (temp.contains("ASB")) {    //Connect to first found apttasb button
+            if((!classicName.isEmpty()) && (classicName.contentEquals(temp)) && (State.contains(("IDLE")))) {
+                State = "Connecting";
+
+                aptt_or_asb = "Aina PTT";
+
+                //IntentFilter intent = new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
+                //registerReceiver(BondReceiver, intent);
+
+                BLEScanner.flushPendingScanResults(mScanCallback);
+                BLEScanner.stopScan(mScanCallback);
+
+                TextView_log_1.setText("Device " + temp + " found.");
+                devName = temp;
+
+                TextView_log_2.setText("Trying to connect...");
+
+                TextUpdateHandler.post(updateText);
+
+                if (BLEGatt != null) {
+
+                    BLEGatt.disconnect();
+
+                    BLEGatt.close();
+                }
+
+                new Timer().schedule(new TimerTask() {
+                    @Override
+                    public void run() {
+
+                        TextUpdateHandler.post(updateText);
+
+                        BLEGatt = BLEDevice.connectGatt(getApplicationContext(), true, GattCallback);
+
+                        Bonding = true;
+
+                    }
+                }, 500);
+            }
+
+            else if (((temp.contains("ASB")) || (temp.contains("APTT"))) && (State.contains("IDLE")) && (classicName.isEmpty())) {     // If rssi based pairing will be used, check rssi level
+//          if (((temp.contains("ASB")) || (temp.contains("APTT"))) && (RSSI > -32) && (State.contains("IDLE"))) {     // If rssi based pairing will be used, check rssi level
+//            if (temp.contains("ASB")) {    //Connect to first found aptt or asb
+                State = "Connecting";
 
                 if (temp.contains("ASB"))
                     aptt_or_asb = "Smart Button";
                 else
                     aptt_or_asb = "Aina PTT";
 
-                IntentFilter intent = new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
-                registerReceiver(BondReceiver, intent);
+                //IntentFilter intent = new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
+                //registerReceiver(BondReceiver, intent);
 
+                BLEScanner.flushPendingScanResults(mScanCallback);
                 BLEScanner.stopScan(mScanCallback);
 
                 TextView_log_1.setText("Device " + temp + " found.");
-                TextView_log_2.setText("Trynig to connect...");
+                devName = temp;
+
+                TextView_log_2.setText("Trying to connect...");
 
                 TextUpdateHandler.post(updateText);
+
+                if (BLEGatt != null) {
+
+                    BLEGatt.disconnect();
+
+                    BLEGatt.close();
+                }
 
                 new Timer().schedule(new TimerTask() {
                     @Override
                     public void run() {
-                        State = "Connecting";
 
                         TextUpdateHandler.post(updateText);
 
                         BLEGatt = BLEDevice.connectGatt(getApplicationContext(), true, GattCallback);
+
+                        Bonding = true;
+
                     }
                 }, 500);
             }
         }
     };
 
-    private final BroadcastReceiver BondReceiver = new BroadcastReceiver() {
+    private class BondReceiver extends BroadcastReceiver {
 
         @Override
         public void onReceive(Context context, Intent intent) {
 
             String action = intent.getAction();
 
-            if (BluetoothDevice.ACTION_BOND_STATE_CHANGED.equals(action)) {
+            if ((BluetoothDevice.ACTION_BOND_STATE_CHANGED.equals(action)) && (!State.contains("Connected"))) {
 
                 System.out.println("ACTION_BOND_STATE_CHANGED");
 
@@ -442,18 +517,23 @@ public class MainActivity extends AppCompatActivity {
 
                     if (BLEDevice.getBondState() == BluetoothDevice.BOND_BONDED) {
 
-                        GetSwVersion = true;
+                        BLEGatt.discoverServices();
 
-                        State = "Connected";
+                        State = "Discovering";
+                        Bonding = false;
 
-                        BLEGatt.readCharacteristic(BLEGatt.getService(AINA_SERV).getCharacteristic(SW_VERS));
+
                     } else
                         Ready = false;
 
                 }
+
             }
+
         }
     };
+
+
 
 
     private final BluetoothGattCallback GattCallback = new BluetoothGattCallback() {
@@ -461,11 +541,16 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
 
-            if (newState == BluetoothProfile.STATE_CONNECTED) {
+            if ((newState == BluetoothProfile.STATE_CONNECTED) && (!State.contains("Discovering"))) {
 
                 if (State.contains("Link Loss")) State = "LL - Reconnect";
 
-                gatt.discoverServices();
+                if((State.contains("Connecting") || State.contains("LL - Reconnect")) && Bonding == false)
+                {
+                        gatt.discoverServices();
+
+                        State = "Discovering";
+                }
 
                 apttasb_button_mask = 0x00;
 
@@ -482,25 +567,25 @@ public class MainActivity extends AppCompatActivity {
 
 
         @Override
-        public void onServicesDiscovered(BluetoothGatt gatt, int status) {
+        public void onServicesDiscovered(final BluetoothGatt gatt, int status) {
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
 
-                new Timer().schedule(new TimerTask() {
-                    @Override
-                    public void run() {
-                        if (NoScanNeeded) {
-                            State = "Connected";
+                if (!State.contains("Connected") && Bonding == false) {
+                    new Timer().schedule(new TimerTask() {
+                        @Override
+                        public void run() {
+                                State = "Connected";
 
-                            GetSwVersion = true;
+                                BLEScanner.stopScan(mScanCallback);
 
-                            BLEGatt.readCharacteristic(BLEGatt.getService(AINA_SERV).getCharacteristic(SW_VERS));
-                        }
-                    }
-                }, 1600);
+                                GetSwVersion = true;
 
+                                BLEGatt.readCharacteristic(BLEGatt.getService(AINA_SERV).getCharacteristic(SW_VERS));
+                            }
+                    }, 1600);
+                }
             }
-
         }
 
 
@@ -529,8 +614,6 @@ public class MainActivity extends AppCompatActivity {
                 if (GetSwVersion) {
 
                     Ready = true;
-
-                    NoScanNeeded = true;
 
                     Aina_Chars = gatt.getService(AINA_SERV).getCharacteristics();
 
@@ -575,25 +658,31 @@ public class MainActivity extends AppCompatActivity {
 
                     GetSwVersion = false;
 
-                    IntentFilter intent = new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
-                    registerReceiver(BondReceiver, intent);
+                    State = "Connecting";
+
+                    if (BLEGatt != null) {
+
+                        BLEGatt.disconnect();
+
+                        BLEGatt.close();
+                    }
 
                     new Timer().schedule(new TimerTask() {
                         @Override
                         public void run() {
+
                             State = "Connecting";
 
                             BLEGatt = BLEDevice.connectGatt(getApplicationContext(), true, GattCallback);
                         }
                     }, 500);
 
-
                 } else if (GetBattLevel) {
 
                     GetBattLevel = false;
 
-                    IntentFilter intent = new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
-                    registerReceiver(BondReceiver, intent);
+                    //IntentFilter intent = new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
+                    //registerReceiver(BondReceiver, intent);
 
                     new Timer().schedule(new TimerTask() {
                         @Override
@@ -636,6 +725,9 @@ public class MainActivity extends AppCompatActivity {
             }
 
             if (GetButtons) {
+                TextView_log_1.setText("Device " + devName + " connected.");
+
+                TextView_log_2.setText("Connected!");
 
                 if ((apttasb_button_mask & 0xff) < 16)
                     TextView_button_mask.setText("0x0" + Integer.toHexString(apttasb_button_mask & 0xff).toUpperCase());
@@ -646,7 +738,7 @@ public class MainActivity extends AppCompatActivity {
 
                 if ((apttasb_button_mask & 1) == 1) TextView_buttons.append("(PTT1 - 0x01) ");
                 if ((apttasb_button_mask & 2) == 2) TextView_buttons.append("(EMERG - 0x02) ");
-                if ((apttasb_button_mask & 4) == 4) TextView_buttons.append("(APTT2 - 0x04) ");
+                if ((apttasb_button_mask & 4) == 4) TextView_buttons.append("(PTT2 - 0x04) ");
 
                 if (((apttasb_button_mask & 8) == 8) && (aptt_or_asb.contains("Smart")))
                     TextView_buttons.append("(DOWN - 0x08) ");
@@ -666,7 +758,7 @@ public class MainActivity extends AppCompatActivity {
                 if ((apttasb_button_mask & 64) == 64) TextView_buttons.append("(RIGHT - 0x40) ");
 
                 if ((apttasb_button_mask & 128) == 128)
-                    TextView_buttons.append("(hearbeat - 0x80)");
+                    TextView_buttons.append("(heartbeat - 0x80)");
             }
 
             if (GetBattLevel) {
@@ -680,7 +772,7 @@ public class MainActivity extends AppCompatActivity {
                 TextView_battlevel.setText("");
 
                 TextView_log_1.setText("Link loss..");
-                TextView_log_2.setText("Trynig to reconnect..");
+                TextView_log_2.setText("Trying to reconnect..");
             }
             if (State.contains("LL - Reconnect")) {
                 TextView_sw_version.setText("");
