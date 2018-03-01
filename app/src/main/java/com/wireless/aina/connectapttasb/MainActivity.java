@@ -26,6 +26,7 @@ import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCallback;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothGattDescriptor;
+import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothProfile;
 import android.bluetooth.le.BluetoothLeScanner;
@@ -50,6 +51,7 @@ import android.widget.Button;
 import android.widget.TextView;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothGattService;
 import android.Manifest;
 
 import com.google.android.gms.appindexing.Action;
@@ -66,7 +68,6 @@ import java.util.Timer;
 import java.util.TimerTask;
 import java.util.UUID;
 
-import static android.icu.lang.UCharacter.GraphemeClusterBreak.L;
 
 
 public class MainActivity extends AppCompatActivity {
@@ -110,8 +111,6 @@ public class MainActivity extends AppCompatActivity {
     private Button Button_amber_led;
     private Button Button_blue_led;
     private Button Button_off_led;
-
-    private List<BluetoothGattCharacteristic> Aina_Chars;
 
     private final static int REQUEST_ENABLE_BT = 1;
 
@@ -234,7 +233,7 @@ public class MainActivity extends AppCompatActivity {
         BLEManager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
         BLEAdapter = BLEManager.getAdapter();
         BLEScanner = BLEAdapter.getBluetoothLeScanner();
-
+/*
         if (this.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
 
             final AlertDialog.Builder builder = new AlertDialog.Builder(this);
@@ -255,7 +254,7 @@ public class MainActivity extends AppCompatActivity {
 
             builder.show();
         }
-
+*/
 
         if (!BLEAdapter.isEnabled()) {
 
@@ -445,6 +444,7 @@ public class MainActivity extends AppCompatActivity {
 
                         TextUpdateHandler.post(updateText);
 
+                        System.out.println(">>>>>connectGatt (OnScanResult))");
                         BLEGatt = BLEDevice.connectGatt(getApplicationContext(), true, GattCallback);
 
                         Bonding = true;
@@ -489,6 +489,7 @@ public class MainActivity extends AppCompatActivity {
 
                         TextUpdateHandler.post(updateText);
 
+                        System.out.println(">>>>>connectGatt (OnScanResult))");
                         BLEGatt = BLEDevice.connectGatt(getApplicationContext(), true, GattCallback);
 
                         Bonding = true;
@@ -508,7 +509,7 @@ public class MainActivity extends AppCompatActivity {
 
             if ((BluetoothDevice.ACTION_BOND_STATE_CHANGED.equals(action)) && (!State.contains("Connected"))) {
 
-                System.out.println("ACTION_BOND_STATE_CHANGED");
+                System.out.println(">>>>>ACTION_BOND_STATE_CHANGED (State != Connected)");
 
                 final int state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR);
                 final int prevState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.ERROR);
@@ -517,14 +518,28 @@ public class MainActivity extends AppCompatActivity {
 
                     if (BLEDevice.getBondState() == BluetoothDevice.BOND_BONDED) {
 
+                        System.out.println(">>>>>Start discover services (State = BOND_BONDED)");
                         BLEGatt.discoverServices();
 
                         State = "Discovering";
                         Bonding = false;
 
+                        new Timer().schedule(new TimerTask() {
+                            @Override
+                            public void run() {
+                                System.out.println(">>>>>DiscoverServices timer");
 
-                    } else
+                                if(State.contains("Discovering")) {
+                                    System.out.println(">>>>>Services not found --> restart");
+                                    BLEGatt.discoverServices();
+                                }
+                            }
+                        }, 5000);
+
+                    } else {
+                        System.out.println(">>>>>State != BOND_BONDED");
                         Ready = false;
+                    }
 
                 }
 
@@ -543,13 +558,30 @@ public class MainActivity extends AppCompatActivity {
 
             if ((newState == BluetoothProfile.STATE_CONNECTED) && (!State.contains("Discovering"))) {
 
-                if (State.contains("Link Loss")) State = "LL - Reconnect";
+                if (State.contains("Link Loss")) {
+                    System.out.println(">>>>>State change LL -> LL - Reconnect");
+                    State = "LL - Reconnect";
+                }
 
                 if((State.contains("Connecting") || State.contains("LL - Reconnect")) && Bonding == false)
                 {
+                    System.out.println(">>>>>Start discovering (state = connecting or LL - Reconnect)");
+
+                    gatt.discoverServices();
+
+                    State = "Discovering";
+                }
+                else {
+                    System.out.println(">>>>>onConeectionStateChane  State = " + State);
+
+                    if(State.contains("Connecting")) {
                         gatt.discoverServices();
 
                         State = "Discovering";
+
+                        Bonding = false;
+                    }
+
                 }
 
                 apttasb_button_mask = 0x00;
@@ -558,7 +590,9 @@ public class MainActivity extends AppCompatActivity {
             } else {
                 Ready = false;
 
-                if (State.contains("Connected")) State = "Link Loss";
+                System.out.println(">>>>>LINK LOSS!");
+
+                if (State.contains("Connected") || State.contains("Discovering")) State = "Link Loss";
 
                 TextUpdateHandler.post(updateText);
             }
@@ -570,21 +604,57 @@ public class MainActivity extends AppCompatActivity {
         public void onServicesDiscovered(final BluetoothGatt gatt, int status) {
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
+                System.out.println(">>>>>GATT_SUCCESS on Services discovered");
 
                 if (!State.contains("Connected") && Bonding == false) {
+                    State = "Connected";
+
                     new Timer().schedule(new TimerTask() {
                         @Override
                         public void run() {
-                                State = "Connected";
-
+                                System.out.println(">>>>>StopScan");
                                 BLEScanner.stopScan(mScanCallback);
 
                                 GetSwVersion = true;
 
-                                BLEGatt.readCharacteristic(BLEGatt.getService(AINA_SERV).getCharacteristic(SW_VERS));
+                                System.out.println(">>>>>GetSevice(AINA_SERV)");
+
+                                BluetoothGattService Service = BLEGatt.getService(AINA_SERV);
+
+                                if(Service != null)
+                                {
+                                    System.out.println(">>>>>Got service, now read SW_VERSION char");
+
+                                    BLEGatt.readCharacteristic(Service.getCharacteristic(SW_VERS));
+                                    new Timer().schedule(new TimerTask() {
+                                        @Override
+                                        public void run() {
+                                            System.out.println(">>>>>ReadSWversion timer");
+                                            if((GetSwVersion == true) && (State.contains("Connected"))) {
+                                                State = "Connecting";
+                                                BLEGatt = BLEDevice.connectGatt(getApplicationContext(), true, GattCallback);
+                                            }
+                                        }
+                                    }, 2000);
+                                }
+                                else
+                                {
+                                    System.out.println(">>>>>Didn't get services, restart from connect");
+                                    State = "Connecting";
+                                    BLEGatt = BLEDevice.connectGatt(getApplicationContext(), true, GattCallback);
+                                }
+
                             }
                     }, 1600);
                 }
+                else
+                {
+                    System.out.println(">>>>>on Services discovered (Bonding or connected!)");
+                }
+            }
+            else
+            {
+                System.out.println(">>>>>GATT_ERROR on Services discovered!");
             }
         }
 
@@ -608,32 +678,40 @@ public class MainActivity extends AppCompatActivity {
 
         @Override
         public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+            System.out.println(">>>>>onCharacteristicsRead");
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
 
                 if (GetSwVersion) {
+                    System.out.println(">>>>>Lets check SWVerion...");
 
-                    Ready = true;
+                    if(characteristic.getValue().length == 6) {
+                        Ready = true;
 
-                    Aina_Chars = gatt.getService(AINA_SERV).getCharacteristics();
+                        apttasb_sw_version = aptt_or_asb + " Version: ";
+                        apttasb_sw_version += Integer.toHexString((characteristic.getValue()[3] & 0xff));
+                        apttasb_sw_version += Integer.toHexString((characteristic.getValue()[4] & 0xff));
+                        apttasb_sw_version += Integer.toHexString((characteristic.getValue()[5] & 0xff)).toUpperCase();
 
-                    apttasb_sw_version = aptt_or_asb + " Version: ";
-                    apttasb_sw_version += Integer.toHexString((characteristic.getValue()[3] & 0xff));
-                    apttasb_sw_version += Integer.toHexString((characteristic.getValue()[4] & 0xff));
-                    apttasb_sw_version += Integer.toHexString((characteristic.getValue()[5] & 0xff)).toUpperCase();
+                        if (apttasb_sw_version.substring(apttasb_sw_version.length() - 1, apttasb_sw_version.length()).equals("0")) {
+                            apttasb_sw_version = apttasb_sw_version.substring(0, apttasb_sw_version.length() - 1);
+                        }
 
-                    if (apttasb_sw_version.substring(apttasb_sw_version.length() - 1, apttasb_sw_version.length()).equals("0")) {
-                        apttasb_sw_version = apttasb_sw_version.substring(0, apttasb_sw_version.length() - 1);
+                        if (apttasb_sw_version.toUpperCase().contains("BE7A"))
+                            apttasb_sw_version = "ASB Version: Beta release";
+
+                        TextUpdateHandler.post(updateText);
+
+                        GetBattLevel = true;
+
+                        BLEGatt.readCharacteristic(BLEGatt.getService(BATT_SERV).getCharacteristic(BATT_LEVEL));
                     }
+                    else
+                    {
+                        System.out.println(">>>>>Not SWVersion, try again...");
+                        BLEGatt.readCharacteristic(BLEGatt.getService(BATT_SERV).getCharacteristic(SW_VERS));
 
-                    if (apttasb_sw_version.toUpperCase().contains("BE7A"))
-                        apttasb_sw_version = "ASB Version: Beta release";
-
-                    TextUpdateHandler.post(updateText);
-
-                    GetBattLevel = true;
-
-                    BLEGatt.readCharacteristic(BLEGatt.getService(BATT_SERV).getCharacteristic(BATT_LEVEL));
+                    }
 
                 } else if (GetBattLevel) {
 
@@ -654,46 +732,11 @@ public class MainActivity extends AppCompatActivity {
                 }
             } else {
 
-                if (GetSwVersion) {
+                System.out.println(">>>>>GATT_ERROR (onCharRead)!");
 
-                    GetSwVersion = false;
+                State = "Connecting";
+                BLEGatt = BLEDevice.connectGatt(getApplicationContext(), true, GattCallback);
 
-                    State = "Connecting";
-
-                    if (BLEGatt != null) {
-
-                        BLEGatt.disconnect();
-
-                        BLEGatt.close();
-                    }
-
-                    new Timer().schedule(new TimerTask() {
-                        @Override
-                        public void run() {
-
-                            State = "Connecting";
-
-                            BLEGatt = BLEDevice.connectGatt(getApplicationContext(), true, GattCallback);
-                        }
-                    }, 500);
-
-                } else if (GetBattLevel) {
-
-                    GetBattLevel = false;
-
-                    //IntentFilter intent = new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
-                    //registerReceiver(BondReceiver, intent);
-
-                    new Timer().schedule(new TimerTask() {
-                        @Override
-                        public void run() {
-                            State = "Connecting";
-
-                            BLEGatt = BLEDevice.connectGatt(getApplicationContext(), true, GattCallback);
-                        }
-                    }, 500);
-
-                }
             }
         }
     };
@@ -820,6 +863,34 @@ public class MainActivity extends AppCompatActivity {
         // See https://g.co/AppIndexing/AndroidStudio for more information.
         AppIndex.AppIndexApi.end(client, getIndexApiAction());
         client.disconnect();
+    }
+
+    @Override
+    public void onPause() {
+        super.onPause();
+    }
+
+    @Override
+    public void onRestart() {
+        super.onRestart();
+
+        if(mBondReceiver == null) {
+            System.out.println(">>>>>onRestart --> New BondReceiver");
+
+            IntentFilter intent = new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
+            registerReceiver(mBondReceiver, intent);
+        }
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+
+        if(mBondReceiver == null) {
+            System.out.println(">>>>>onResume --> New BondReceiver");
+            IntentFilter intent = new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
+            registerReceiver(mBondReceiver, intent);
+        }
     }
 }
 
